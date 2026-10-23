@@ -106,6 +106,11 @@ How introspection informs downstream steps:
    Never guess from memory. Provide subagents the full version context.
 2. Verify template variables exist in the Airflow version (e.g., `tomorrow_ds`
    removed in 3.x → use `macros.ds_add(ds, 1)`).
+3. Verify a parameter is listed in the operator's `template_fields` (or
+   `aws_template_fields`) before putting Jinja in it. Non-templated values are
+   sent literally — e.g. `EmrServerlessCreateApplicationOperator` declares no
+   template fields, so `config={"name": "app-{{ ds_nodash }}"}` fails the EMR
+   name validation with the braces intact.
 
 ### A4. Requirements Validation
 
@@ -202,11 +207,21 @@ separate A5 pass isn't required.
 
 1. **Timeout chain**: `dagrun_timeout >= sum(service timeouts + retries)`.
    Every task gets `execution_timeout`. Sensors use their own `timeout`.
-2. **Deferrable**: use `deferrable=True` on every supporting operator.
+2. **Deferrable**: use `deferrable=True` on supporting operators that wait
+   on long-running work (sensors, job/query/crawler operators).
    Only available in Airflow 2.7+. Do NOT use for versions before 2.7.
+   **Exception — teardown/delete operators:** keep short cleanup operators
+   synchronous (`deferrable=False`, `wait_for_completion=True`). In amazon
+   provider 9.x, `EmrServerlessDeleteApplicationOperator(deferrable=True)`
+   resumes after its inherited *stop* step and never calls
+   `delete_application`: the task logs "deleted successfully" while the
+   application stays `STOPPED`.
 3. **Retries**: sensor=0, API=3, compute=1 (expensive) or 2 (cheap
    idempotent), DQ=2, teardown=2.
    Always `retry_exponential_backoff=True` + `max_retry_delay`.
+   Give the *first* sensor 1 retry when the environment sets
+   `core.dags_are_paused_at_creation=False`: a run can start before the
+   worker has synced the new file (`DAG not found during start up`).
 4. **No top-level code or heavy imports**: only `from airflow...` imports
    and constant definitions at module level. All boto3/json/logic inside
    functions. Top-level code degrades scheduler parsing.
@@ -255,6 +270,18 @@ separate A5 pass isn't required.
     defaults to True, so a fixed past `start_date` (see dag-patterns.md) plus a
     schedule backfills every missed interval in one burst when the DAG is
     unpaused. AF3 defaults it False; set it explicitly so behavior matches on both.
+17. **Setup/teardown for per-run resources**: when a task creates a resource that
+    a later task must clean up (an EMR Serverless application, a cluster, a
+    temporary table), mark the cleanup task as a teardown of its creator —
+    `cleanup.as_teardown(setups=create)` (Airflow 2.7+) — instead of
+    `trigger_rule="all_done"`. A plain `all_done` cleanup also runs when the
+    creator never ran and then fails on a `None` resource id.
+18. **Namespace external resources per environment**: Glue job and crawler
+    names, catalog table prefixes, EMR application names, and S3 output
+    prefixes must not be shared by two environments (for example the current
+    and the new environment during an upgrade, or a dev and a prod copy of the
+    DAG). Sharing them causes `ConcurrentRunsExceededException` /
+    `CrawlerRunningException` and overwrites outputs.
 
 ### A7. Write
 

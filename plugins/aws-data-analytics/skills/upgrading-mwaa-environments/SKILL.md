@@ -93,6 +93,7 @@ These rules apply regardless of user instructions.
 
 - [discovery-preflight.md](references/discovery-preflight.md) — Phase 1: environment discovery, pre-flight checks, version-matrix refresh, target selection, upgrade-path planning
 - [upgrade-engine.md](references/upgrade-engine.md) — the step-by-step upgrade: per-jump upgrade, conditional validate/scan/fix, resume
+- [docker-validation.md](references/docker-validation.md) — Phase 6: build the target MWAA image locally and parse DAGs/requirements against it
 - [airflow2-to-3-checklist.md](references/airflow2-to-3-checklist.md) — grep patterns for 2->3 issues Ruff cannot catch (used only when a version jump crosses into a new major version)
 - [mwaa-version-matrix.md](references/mwaa-version-matrix.md) — runtime-first version/Python/EOS matrix, version-jump rules, providers, unsupported features
 - [airflow2-to-3-quick-reference.md](references/airflow2-to-3-quick-reference.md) — 2->3 import/context/config mapping tables (used only when a version jump crosses into a new major version)
@@ -112,7 +113,12 @@ For deeper detail beyond embedded references, fetch at runtime:
 
 At every invocation, check for `.mwaa-upgrade-plan-<env-name>.md` in the
 workspace root (where `<env-name>` is the source environment name). Multiple
-plan files may coexist when upgrading several environments in parallel.
+plan files may coexist when upgrading several environments in parallel. Run
+only one upgrade per source environment at a time — the plan file is keyed by
+the source name. If a plan exists with `phase: complete` and the user starts a
+new upgrade of the same source, rename the old plan to
+`.mwaa-upgrade-plan-<env-name>.<UTC-date>.done.md` (keep it as the record)
+before writing the new one; never resume a completed plan.
 
 - **If exists**: Load the plan, report source, target, chosen approach, and
   the position `(working_on, current_jump, jump_status)`. Resume the engine
@@ -150,7 +156,7 @@ marked `PASSED` requires all its prerequisite Checklist items `DONE`/`SKIP`;
 Upgrade Path Status; for the Rehearsed in-place upgrade, `live_upgrade_allowed`
 must equal the test-run checkpoint. On ANY violation, do NOT trust the plan -
 establish ground truth with read-only `aws mwaa get-environment`, `/dags`, and
-`/health`, repair the plan to match reality, and record it in `Last updated`.
+the health endpoint (`/health` on Airflow 2.x, `/monitor/health` on 3.x), repair the plan to match reality, and record it in `Last updated`.
 If reality is ambiguous, ask the user. A stale `PASSED` checkpoint otherwise
 triggers a destructive next action: switchover + delete your current
 environment (New-environment upgrade), the irreversible live upgrade
@@ -236,24 +242,29 @@ Record the chosen approach's slug (`new-environment` / `in-place-rehearsed` /
 
    Report findings grouped by rule code. Ruff AIR rules cover 2-to-3
    (AIR301/302/303/311/312) and 3.1 (AIR321, preview) API changes; they do NOT
-   detect APIs removed between 2.x minor versions, nor 3.2-specific changes.
-   The pre-cross deprecation-warning scan in the engine covers the
-   2.x-internal gap. If NO version jump is `crosses_major` (a within-major
-   upgrade), the AIR scan is informational only; rely on the engine's generic
-   `DeprecationWarning` scan instead.
+   detect APIs removed between 2.x minor versions, nor 3.2-specific changes,
+   nor Python standard-library removals. If NO version jump is
+   `crosses_major` (a within-major upgrade), the AIR scan is informational
+   only. Do not rely on CloudWatch log scans to close these gaps: on MWAA,
+   user-DAG `RemovedInAirflow3Warning`/`DeprecationWarning` messages do not
+   reach the scheduler or DAG-processing logs, and Python hides
+   `DeprecationWarning` outside `__main__` by default. The Phase 6 Docker parse
+   (with warnings enabled) is the reliable detector.
 
    **Version-aware severity for AIR311 (import path moves):** AIR311 flags
    imports that moved to `airflow.sdk` (e.g., `airflow.datasets.Dataset` ->
-   `airflow.sdk.Asset`). Severity depends on the target version:
-   - **Target 3.0.x or 3.1.x:** soft deprecation — compatibility shims exist,
-     old imports still work. Fix recommended but not blocking.
-   - **Target 3.2.1+:** hard blocker — shim modules are fully removed
-     (`ModuleNotFoundError` at parse time). Must fix before deploying to target.
+   `airflow.sdk.Asset`). Treat AIR311 as **fix recommended**, and decide
+   whether it blocks by parsing the DAGs against the target image (Phase 6),
+   not by version number alone. Observed on MWAA 3.2.1 and 3.3.1: the common
+   AF2 import paths (`from airflow import DAG`, `airflow.decorators`,
+   `airflow.operators.python`/`bash`, `airflow.models.Variable`) still parse,
+   while AIR301 removals (`days_ago`, the `schedule_interval` DAG argument)
+   fail at parse time. Classify **AIR301 findings as blocking**; classify an
+   AIR311 finding as blocking only when the target-image parse fails on it.
 
-   Always classify AIR311 as "must fix" when the target is 3.2.1+. The fixed
-   code (`from airflow.sdk import ...`) is AF3-only and cannot be deployed
-   until after the cross-major version jump completes — see the two-phase
-   deployment note in each approach reference.
+   The fixed code (`from airflow.sdk import ...`) is AF3-only and cannot be
+   deployed until after the cross-major version jump completes — see the
+   two-phase deployment note in each approach reference.
 
    **Patterns Ruff does NOT catch:** The manual checklist
    ([airflow2-to-3-checklist.md](references/airflow2-to-3-checklist.md))
@@ -271,6 +282,14 @@ Record the chosen approach's slug (`new-environment` / `in-place-rehearsed` /
      or drop. The agent must verify command availability on the target version
      via `cheat-sheet` before committing to this path.
    Record each affected DAG and its category in the plan (Phase 4).
+   **Python-line change (any jump flagged `python_change`, including
+   within-major jumps such as 2.10.x -> 2.11.x):** grep the DAG folder, shared
+   modules, and plugins for standard-library modules removed in the new Python
+   line. For 3.11 -> 3.12: `import imp`/`from imp`, `asynchat`, `asyncore`,
+   `smtpd`, `distutils`, `configparser.SafeConfigParser`, `locale.format(`,
+   and `unittest` alias methods (`assertEquals`, `failUnless`, ...). Each hit
+   is a candidate parse-time break; confirm it in Phase 6 (`distutils` may
+   still import through the setuptools shim in the MWAA image).
 3. Check requirements.txt against the target version's constraints from [mwaa-version-matrix.md](references/mwaa-version-matrix.md).
 4. **Secrets backend detection**: Check for `secrets.backend` config override in environment configuration. If using Secrets Manager or Parameter Store, note that variables/connections are external and do not need migration. **If NO secrets backend is configured, surface this to the user at plan time:** connection passwords will NOT migrate via the REST API (2.x omits, 3.x masks), so password-bearing connections must be moved to a secrets backend or have their passwords re-entered out of band on the target — and variable values / connection `extra` transit `--body`/CLI args and the audit log during migration. Record this in the plan (Phase 4).
 5. **Plugin inventory**: If PluginsS3Path is set, list contents. Flag FAB/web-view plugins needing special attention.
@@ -347,7 +366,7 @@ Present the plan to the user for confirmation before proceeding.
    e. Save progress (see plan-materialization.md `## Saving progress`): mark
       each DAG `DONE` and update `Last updated` before starting the next batch.
 
-## Phase 6: Local Validation via Docker (Recommended; Strongly Recommended for Cross-Major)
+## Phase 6: Local Validation via Docker (Recommended; Strongly Recommended for Cross-Major and Python-Line Changes)
 
 Uses `aws/amazon-mwaa-docker-images` to validate fixed code against the target
 version. This repo only provides images for Airflow 2.9.2 and newer. If the
@@ -356,17 +375,28 @@ plan) and rely on the engine's live validation in Phase 7 instead.
 
 **Cross-major version jumps:** When any version jump is `crosses_major`,
 Docker validation is strongly recommended. Ruff AIR rules miss several
-runtime-breaking patterns (e.g., `_TaskDecorator.output` removal, fully-removed
-shim modules in 3.2.1+). Docker import validation catches these before live
+runtime-breaking patterns (e.g., `_TaskDecorator.output` removal, AIR301
+removals such as `days_ago`). Docker import validation catches these before live
 deployment, avoiding iterative fix-deploy-fail cycles on the remote environment.
 If Docker is skipped for a cross-major upgrade, log the skip reason AND warn
 that undetected runtime errors are likely.
+
+**Python-line changes (`python_change`, e.g. 2.10.x -> 2.11.x):** treat Docker
+validation as strongly recommended too. Standard-library removals (such as
+`imp` in Python 3.12) are invisible to Ruff AIR rules and to CloudWatch log
+scans; parsing the unchanged DAGs in the target image is the only pre-upgrade
+signal, and on an in-place upgrade the alternative is discovering the break on
+your live environment after the jump.
+
+See [docker-validation.md](references/docker-validation.md) for a working
+build-and-parse procedure (image build on Apple silicon, required environment
+variables, version differences in `DagBag`).
 
 1. Check Docker availability: `docker --version`. If unavailable, user declines, or target < 2.9.2, log skip in plan with warning and proceed to Phase 7.
 2. Pull the target-version image (resolve the exact tag at runtime from the repo README).
 3. **Validate requirements.txt**: Mount into container, run install validation. If failures: report conflicts, suggest fixes, loop until passing or user skips.
 4. **Validate plugins.zip** (if present): Mount and run import validation.
-5. **Validate DAG imports**: Mount fixed DAGs, run parsing. If errors: return to Phase 5 for affected files, then re-validate.
+5. **Validate DAG imports**: Mount fixed DAGs, run parsing with Python warnings enabled (`warnings.simplefilter("default")`) so `RemovedInAirflow3Warning`/`DeprecationWarning` from DAG code are printed. If errors: return to Phase 5 for affected files, then re-validate. For `python_change` jumps, also parse the UNCHANGED source DAGs against the target image to find standard-library breaks.
 6. Save progress: mark Docker validation `DONE` or `SKIP` (with reason) and update
    `Last updated`.
 

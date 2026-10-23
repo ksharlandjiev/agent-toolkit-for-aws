@@ -44,7 +44,8 @@ target, each version jump confirmed separately. See
 ### 3. Re-check your current environment at the target version
 
 ```
-aws mwaa invoke-rest-api --name <current-env> --method GET --path /health
+aws mwaa invoke-rest-api --name <current-env> --method GET --path /health          # Airflow 2.x
+aws mwaa invoke-rest-api --name <current-env> --method GET --path /monitor/health  # Airflow 3.x
 aws mwaa invoke-rest-api --name <current-env> --method GET --path /dags \
   --query-parameters '{"limit":"100","offset":"0"}'
 ```

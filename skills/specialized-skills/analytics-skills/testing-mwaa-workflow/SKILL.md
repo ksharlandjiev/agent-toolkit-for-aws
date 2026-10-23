@@ -124,14 +124,17 @@ already been given.
 Before triggering, check for scheduler-created runs (see provisioned-testing
 reference). Apply the **freshness gate** before adopting any prior run:
 
-- **Delegated mode:** always trigger fresh. Prior runs predate the deployment
-  by definition — do not adopt regardless of state.
-- **Standalone mode:** compare `run.start_date` against `dag.last_parsed_time`
+- **Both modes:** compare `run.start_date` against `dag.last_parsed_time`
   read from the `/dags` collection response the Step 1 readiness check already
   fetches (the collection returns `last_parsed_time` per DAG in both v1 and v2 —
   no per-DAG call needed). If `start_date < last_parsed_time`, the run tested a
   prior artifact version — treat as stale, trigger fresh. Only adopt runs where
   `start_date >= last_parsed_time`.
+- **Delegated mode, additionally:** adopt only if `last_parsed_time` is later
+  than the redeploy (upload) time. Do not assume every prior run is stale — an
+  environment with `core.dags_are_paused_at_creation=False` can schedule a run
+  within a second of the first parse, and that run tests the new artifact; a
+  forced fresh trigger would only queue behind it under `max_active_runs`.
 
 For fresh, non-stale runs that pass the gate: if a run already exists for the
 target interval, adopt it instead of POSTing. Monitor through Step 3.
@@ -255,10 +258,10 @@ human-gated-pause, each named explicitly.
 | Symptom | Cause | Action |
 |---------|-------|--------|
 | DAG absent from `GET /dags` | S3-sync lag or import error | Hand to debugging-mwaa-workflow before triggering |
-| `--path` rejected / truncated | Path over 64 chars (https://docs.aws.amazon.com/cli/latest/reference/mwaa/invoke-rest-api.html) | Poll the collection path with `--query-parameters` |
-| `RestApiClientException` on poll | Web server unreachable | Fall back to DAGProcessing/Scheduler log groups |
+| `--path` rejected / truncated | Path over 64 chars (https://docs.aws.amazon.com/cli/latest/reference/mwaa/invoke-rest-api.html) | Poll the collection path with `--query-parameters`; for task instances use `/dags/<dag_id>/dagRuns/~/taskInstances` and filter on `dag_run_id`; keep manual `dag_run_id`s short |
+| `RestApiClientException` on poll | Web server unreachable, or an endpoint that does not exist for this REST version (e.g. `/dags/<dag_id>/taskInstances`) | Check the path against v1 (2.x) / v2 (3.x); then fall back to DAGProcessing/Scheduler log groups |
 | `RestApiClientException` on dagRuns POST (empty message) | DAG not ready — AF2: `is_active=false` (activation incomplete); AF3: `is_stale=true` (`is_active` does not exist in v2) | Poll `/dags` collection until ready (AF2 `is_active=true` / AF3 `is_stale=false`); do not retry the trigger blind |
-| Manual run created but stuck in `queued`, never starts (AF3) | DAG is paused — AF3 does not execute manual runs while paused (AF2 does) | Unpause (`PATCH /dags/<dag_id>` `{"is_paused": false}`) then trigger; common right after an upgrade where DAGs are deployed paused |
+| Manual run created but stuck in `queued`, `start_date` null, never starts | DAG is paused — neither Airflow 2.x nor 3.x starts runs of a paused DAG | Unpause (`PATCH /dags/<dag_id>` `{"is_paused": false}`) then trigger; common right after a deploy or upgrade where DAGs are registered paused |
 | Serverless `get-workflow` not READY | Still creating/updating or failed | Wait for READY; if FAILED, hand to debugging |
 | Same failure two attempts running | Fix not addressing root cause | Stop at no-progress; summarize; do not burn the cap |
 

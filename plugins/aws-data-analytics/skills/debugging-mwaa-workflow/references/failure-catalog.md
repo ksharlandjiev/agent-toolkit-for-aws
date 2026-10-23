@@ -12,6 +12,9 @@ evidence.
 | Tasks queued, never run | Autoscaling ceiling or scheduler load | Worker/Scheduler logs; `MaxWorkers` | Raise `MaxWorkers`; reduce `core.parallelism`; stagger start times |
 | `AccessDenied` / `EntityNotFound` in task logs | IAM gap OR wrong/nonexistent resource OR cross-account | Read the exception's resource ARN, then check which failure it is (below) | Depends on which of the three — see the disambiguation note |
 | DAG not appearing in UI | Import/parse error, scan interval not elapsed, `dag_id` collision, not-yet-active, or S3-sync delay | `GET /importErrors` and `GET /dags/{dag_id}` via invoke-rest-api; DAGProcessing log group; confirm `DagS3Path` object exists | See the **DAG not appearing in the UI** checklist below — the cause determines the fix |
+| `DAG not found during start up` on attempt 1, run started within seconds of first parse | Worker S3-sync race: the scheduler created the run before the worker had the file (typical with `core.dags_are_paused_at_creation=False`) | Compare the run's `start_date` with the DAG's `last_parsed_time`; the same task succeeds on retry | Re-run. Prevent by deploying paused (`core.dags_are_paused_at_creation=True`) and unpausing after readiness |
+| `ConcurrentRunsExceededException` / `CrawlerRunningException` | The same Glue job, crawler, or other named AWS resource is driven by more than one DAG or environment at once | List which environments' DAGs reference the resource name | Give each environment its own resource names and S3 prefixes; do not raise concurrency to hide sharing |
+| Cleanup/teardown task succeeded but the resource still exists (for example an EMR Serverless application left `STOPPED`) | Operator reported success without the side effect — e.g. `EmrServerlessDeleteApplicationOperator(deferrable=True)` in amazon provider 9.x resumes after the inherited stop step and never calls `delete_application` | `aws emr-serverless get-application` shows `STOPPED`, not `TERMINATED`, after a "deleted successfully" log line | Use `deferrable=False, wait_for_completion=True` on the delete operator; delete leaked resources (user-run) |
 
 ### DAG not appearing in the UI
 
@@ -152,6 +155,18 @@ by the environment is irrelevant to the current failure.
   libraries at install time.
 - Check whether the environment version was bumped (get-environment
   `AirflowVersion`) — a version change re-resolves the entire provider stack.
+- Check whether the version bump changed the Python line (Airflow 2.7–2.10 run
+  Python 3.11; 2.11.x and 3.x run Python 3.12). A `ModuleNotFoundError` for a
+  standard-library module removed in 3.12 (`imp`, `asynchat`, `asyncore`,
+  `smtpd`) or an `ImportError` on `configparser.SafeConfigParser` in an
+  unchanged DAG is this drift. `distutils` may still import through the
+  setuptools shim in the MWAA image, so do not assume it breaks — check the
+  `/importErrors` traceback.
+- Requirements that never installed: an environment can stay `AVAILABLE` while
+  every `requirements_install_*` log stream (Scheduler and Worker log groups)
+  shows `ERROR:` — for example a `--constraint` path that does not exist under
+  `DagS3Path`. Compare the providers actually installed (`GET /providers`) with
+  the pins in requirements.txt.
 
 Remediation to recommend: pin exact versions in requirements.txt and use the
 MWAA constraints file for the target Airflow version; pin `.whl` contents in

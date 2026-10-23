@@ -150,6 +150,12 @@ aws mwaa invoke-rest-api --name <new-env> --method POST --path /variables \
   --body '{"key":"<key>","value":"<value>"}'
 ```
 
+Send only the fields that have values. A body that carries a field set to
+`null` (for example `"description": null` copied from the GET response) is
+rejected with an empty `RestApiClientException`. When a migration call fails,
+do not echo the request body in output or logs — it contains the variable
+value.
+
 **Connections** (skip if secrets backend handles these):
 
 ```
@@ -242,6 +248,15 @@ current environment is paused and no longer serving it.
 - Do NOT begin the batch-by-batch switchover until test-run validation
   passes. Parse success alone does not prove artifacts execute correctly at
   the target version.
+- While test runs execute, your current environment keeps running the same
+  DAGs. DAGs that drive named AWS resources (Glue jobs and crawlers, EMR
+  applications, S3 output prefixes) must use names that differ between the two
+  environments, or the runs collide (`ConcurrentRunsExceededException`) and
+  overwrite each other's outputs. Record any renaming in the plan as a
+  Phase 5 change.
+- After the checkpoint passes, pause the tested DAGs on the new environment
+  again unless the user accepts duplicate scheduled runs until switchover;
+  Phase 8.1 performs the final unpause per batch.
 
 Record execution results in the plan under a `## Test-run results` section
 (DAG ID, run_id, state, duration, and any NEEDS-DECISION items).

@@ -57,15 +57,21 @@ Read `RestApiResponse.dag_runs[].state`. Filter for `failed`.
 
 ### Get task instances for a failed run
 
-Use the collection endpoint and pass the run in query parameters — the
-`--path` is capped at 64 characters (MWAA `InvokeRestApi`), and the per-run
-path below often exceeds it:
+Use the `~` (all runs) wildcard collection and filter on `dag_run_id`
+client-side — the `--path` is capped at 64 characters (MWAA `InvokeRestApi`),
+and the per-run path below often exceeds it (a scheduled run id such as
+`scheduled__2026-10-22T05:29:00+00:00` is 37 characters on its own):
 
 ```bash
 aws mwaa invoke-rest-api --name <env> \
-  --path /dags/<dag_id>/taskInstances --method GET \
-  --query-parameters '{"dag_run_id":"<run_id>","limit":"100","offset":"0"}'
+  --path /dags/<dag_id>/dagRuns/~/taskInstances --method GET \
+  --query-parameters '{"limit":"100","offset":"0"}'
 ```
+
+Keep only the entries whose `dag_run_id` equals the target run. Do NOT use
+`/dags/<dag_id>/taskInstances?dag_run_id=<run_id>` — that endpoint does not
+exist in either REST API v1 (Airflow 2.x) or v2 (Airflow 3.x) and fails with an
+empty `RestApiClientException`.
 
 The per-run path is shorter to read but embeds `<run_id>` in the path, so
 `/dags/<dag_id>/dagRuns/<run_id>/taskInstances` frequently exceeds the 64-char
@@ -111,7 +117,34 @@ parse failure.
 
 A `RestApiClientException` (rare — possible on a mis-scoped execution role)
 means `invoke-rest-api` cannot reach the web server. Fall back to the Scheduler
-and DAGProcessing CloudWatch log groups for run/task state.
+and DAGProcessing CloudWatch log groups for run/task state. Those log groups
+exist only when `LoggingConfiguration` enables them; if they are disabled (only
+`TaskLogs` enabled is common), say so in the diagnosis and rely on the REST API
+and the Task log group instead of reporting "no logs found".
+
+A `RestApiServerException` (HTTP 5xx) is a web-server-side error, not a
+permissions problem. On an idle environment the first database-heavy calls
+(`/dags`, `/importErrors`, `/variables`) can fail transiently while lighter
+calls (`/version`, `/pools`) succeed. Retry with exponential backoff (for
+example 1 s, 2 s, 4 s) and reduce `limit` before concluding the API is broken;
+only a 5xx that reproduces after backoff is a finding.
+
+### Deferrable AWS operators: read the service's own run record
+
+When a deferrable AWS operator (Glue, EMR, Athena, SageMaker, and similar)
+fails, the Task log often shows only `Trigger failure` / `Trigger failed` with a
+truncated traceback — the real cause stays in the AWS service. Read the service
+run record that the task started, for example:
+
+```bash
+aws glue get-job-runs --job-name <job-name> --max-results 3     # JobRuns[].ErrorMessage
+aws emr-serverless get-job-run --application-id <app-id> --job-run-id <run-id>
+aws athena get-query-execution --query-execution-id <id>        # Status.StateChangeReason
+```
+
+The denied principal in an `AccessDenied` there is frequently the service role
+(for example the Glue job role), not the MWAA execution role — fix the role the
+message names.
 
 ## Remediation commands (present to user; do not execute)
 

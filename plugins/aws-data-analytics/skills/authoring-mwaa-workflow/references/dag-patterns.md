@@ -134,6 +134,43 @@ deferrable rungs work out of the box on both Airflow 2 and 3. The
 `mode="reschedule"` fallback needs no triggerer. See A6 rule 5 in
 authoring-provisioned-dag.md for the submit + `@task` sensor split.
 
+## Per-run Resource Lifecycle (Setup/Teardown)
+
+Create the resource in a setup task and delete it in a teardown task tied to
+that setup (A6 rules 2 and 17). Keep the delete synchronous:
+
+```python
+create_app = EmrServerlessCreateApplicationOperator(
+    task_id="create_emr_app",
+    release_label="<emr-release>",
+    job_type="SPARK",
+    config={"name": f"<app-name>-{ENV_TAG}"},  # not templated: no Jinja here
+    deferrable=True,
+)
+run_job = EmrServerlessStartJobOperator(
+    task_id="run_job",
+    application_id=create_app.output,
+    execution_role_arn=EMR_ROLE_ARN,
+    job_driver=JOB_DRIVER,
+    deferrable=True,
+)
+delete_app = EmrServerlessDeleteApplicationOperator(
+    task_id="delete_emr_app",
+    application_id=create_app.output,
+    force_stop=True,
+    deferrable=False,          # deferrable=True never calls delete_application (amazon 9.x)
+    wait_for_completion=True,
+).as_teardown(setups=create_app)
+
+create_app >> run_job >> delete_app
+```
+
+`.output` on a classic operator (as above) is a valid XCom reference on both
+Airflow 2 and 3; only the `.output` attribute of a `@task`-decorated function
+object was removed in Airflow 3. After a test run, confirm the resource is
+gone in the service (`aws emr-serverless get-application` → `TERMINATED`), not
+just that the teardown task succeeded.
+
 ## start_date
 
 Use a fixed, timezone-aware datetime from stdlib. Never use `days_ago()` (deprecated

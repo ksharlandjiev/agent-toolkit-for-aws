@@ -61,9 +61,12 @@ aws mwaa invoke-rest-api --name <env> --path /dags/<dag_id>/dagRuns \
   --method POST --body '{"dag_run_id": "<explicit-id>", "logical_date": "<unique-ISO8601-UTC>"}'
 ```
 
-`<explicit-id>` is a unique string you choose (e.g., `smoke_test__2026-08-11T01-00-00`).
+`<explicit-id>` is a unique string you choose (e.g., `smoke_t1`).
 Constraints: must not contain `/`; max 250 chars; must be unique per
-(dag_id, logical_date) pair.
+(dag_id, logical_date) pair. **Keep it short (about 20 characters or fewer):**
+`invoke-rest-api` caps `--path` at 64 characters, so any per-run path
+(`/dags/<dag_id>/dagRuns/<dag_run_id>/...`) built from a long id is rejected,
+and on Airflow 3.x there is no short-path alternative for per-run operations.
 
 **Airflow 2.x (REST API v1):**
 
@@ -84,13 +87,13 @@ with no descriptive message.
 
 Capture the `dag_run_id` so the poll can find this exact run.
 
-**Unpause before triggering (AF3 behavior change).** On Airflow 3.x, a manual
-run POSTed against a *paused* DAG is accepted (the run is created in `queued`)
-but the scheduler does not execute it while the DAG is paused — it sits
-`queued` indefinitely and looks like a stuck trigger. Airflow 2.x runs manual
-triggers regardless of pause state; AF3 does not. Unpause first
+**Unpause before triggering (both Airflow 2.x and 3.x).** A manual run POSTed
+against a *paused* DAG is accepted (the run is created in `queued`) but the
+scheduler does not start it while the DAG is paused — it sits `queued` with
+`start_date: null` indefinitely and looks like a stuck trigger. This holds on
+Airflow 2.x (verified on 2.10.3) as well as 3.x. Unpause first
 (`PATCH /dags/<dag_id>` with `{"is_paused": false}`), then trigger. This is
-common right after an upgrade, where DAGs are deployed paused.
+common right after a deploy or an upgrade, where DAGs are registered paused.
 
 **Prefer a definitely-past `logical_date`.** Manually triggered runs are
 processed regardless of `logical_date`, but using a timestamp in the past
@@ -117,22 +120,27 @@ trigger failure but is the concurrency cap.
 When a paused DAG is unpaused during testing (common in delegated mode — the
 DAG was just deployed paused), and `catchup=False` with an eligible interval
 already past, the scheduler creates a `scheduled__` run immediately. This
-consumes the next eligible `logical_date`.
+consumes the next eligible `logical_date`. If the environment sets
+`core.dags_are_paused_at_creation=False`, the same happens without an unpause —
+the scheduler can create the run within a second of the DAG's first parse.
 
 Before POSTing a manual trigger:
 
 1. GET `/dags/<dag_id>/dagRuns` with `{"order_by": "-start_date", "limit": "1"}`.
 2. **Apply the freshness gate** — a prior run may have tested a previous
-   version of the artifact:
-   - **Delegated mode:** the artifact was just rewritten and redeployed.
-     Any prior run by definition tested the previous file. Skip adoption
-     and trigger fresh regardless of state.
-   - **Standalone mode:** compare `run.start_date` against
-     `dag.last_parsed_time` read from the `/dags` collection readiness
-     response (the ready check already fetches it; the collection returns
-     `last_parsed_time` per DAG, so there is no need to re-query the per-DAG
-     endpoint). If `start_date < last_parsed_time`, the run predates the
-     current artifact — treat as stale, trigger fresh.
+   version of the artifact. In both modes, compare `run.start_date` (or
+   `queued_at` when `start_date` is not set yet) against
+   `dag.last_parsed_time` read from the `/dags` collection readiness response
+   (the ready check already fetches it; the collection returns
+   `last_parsed_time` per DAG, so there is no need to re-query the per-DAG
+   endpoint):
+   - `start_date < last_parsed_time` — the run predates the current artifact;
+     treat as stale and trigger fresh.
+   - `start_date >= last_parsed_time` — the run exercises the current artifact.
+     **Delegated mode** may adopt it only when `last_parsed_time` is later than
+     the upload time of the redeployed file (the run cannot predate the new
+     artifact); otherwise trigger fresh. Adopting avoids a duplicate run that
+     would only queue behind it under `max_active_runs`.
 3. If a **fresh** run exists (passes the gate):
    - Non-terminal (`queued`/`running`) — adopt it: skip the POST, proceed
      directly to poll (Step 3) using the scheduler's `dag_run_id`.
@@ -168,6 +176,17 @@ captured id and read its `state` — a scheduler-created or concurrent run can
 otherwise be the newest by `start_date` and mask the target run. Terminal
 states: `success`, `failed`.
 `queued`/`running` mean keep polling.
+
+To see per-task progress, read the `~` (all runs) collection and keep the
+entries whose `dag_run_id` equals the captured id:
+
+```bash
+aws mwaa invoke-rest-api --name <env> --path /dags/<dag_id>/dagRuns/~/taskInstances \
+  --method GET --query-parameters '{"limit": "100", "offset": "0"}'
+```
+
+`/dags/<dag_id>/taskInstances?dag_run_id=...` does not exist in REST API v1 or
+v2 and fails with an empty `RestApiClientException`.
 
 ## Fallback
 

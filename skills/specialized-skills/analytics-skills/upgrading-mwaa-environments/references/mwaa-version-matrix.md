@@ -36,8 +36,16 @@ For releases newer than 3.2.1, derive the Python version from the runtime fetch
 (`python_by_version`) above rather than from this list, since a future 3.x may
 adopt Python 3.13+.
 A version jump that crosses any of these boundaries carries compiled-dependency
-risk and is flagged `python_change`. `GetEnvironment` returns `AirflowVersion`
-but not the Python version, so derive the source Python from these boundaries.
+risk and standard-library-removal risk, and is flagged `python_change`.
+`GetEnvironment` returns `AirflowVersion` but not the Python version, so derive
+the source Python from these boundaries.
+
+Standard-library modules removed at the 3.11 -> 3.12 boundary that DAG code
+still commonly imports: `imp` (use `importlib`), `asynchat`, `asyncore`,
+`smtpd`, and `distutils` (the MWAA image may still provide `distutils` through
+the setuptools shim, so confirm with a Phase 6 parse rather than assuming a
+break). Also removed: `configparser.SafeConfigParser`, `locale.format()`, and
+the `unittest` method aliases (`assertEquals`, `failUnless`, ...).
 
 A source below the current minimum supported version is below supported
 upgrade paths: report as manual intervention or environment recreation; do not
@@ -110,7 +118,12 @@ _Verify against the AWS MWAA documentation at runtime; feature support can chang
 - MWAA auto-routes paths based on environment Airflow version
 - AF2 environments: paths resolve to `/api/v1`
 - AF3 environments: paths resolve to `/api/v2`
-- Pass just the path portion (e.g., `/dags`, `/health`) without the version prefix
+- Pass just the path portion (e.g., `/dags`) without the version prefix
+- Health endpoint differs by version: `/health` on AF2 (v1), `/monitor/health`
+  on AF3 (v2); each returns `RestApiClientException` on the other version
+- Task instances of one run: `/dags/<dag_id>/dagRuns/~/taskInstances`, filtered
+  on `dag_run_id` client-side; `/dags/<dag_id>/taskInstances` does not exist in
+  v1 or v2
 - 10-second timeout, 6 MB max response
   (https://docs.aws.amazon.com/mwaa/latest/userguide/access-mwaa-apache-airflow-rest-api.html)
 - Requires IAM permission: `airflow:InvokeRestApi`

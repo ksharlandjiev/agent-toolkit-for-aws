@@ -6,7 +6,7 @@ Patterns that require manual grep/search because Ruff AIR30x rules do not cover 
 
 ## 1. Direct metadata DB access
 
-Search for: `provide_session`, `create_session`, `@provide_session`, `from airflow.settings import Session`, `from airflow.settings import engine`, `session.query(`, `engine.connect(`
+Search for: `provide_session`, `create_session`, `@provide_session`, `from airflow.settings import Session`, `from airflow.settings import engine`, `session.query(`, `engine.connect(`, `SQL_ALCHEMY_CONN` (e.g. `os.getenv("AIRFLOW__CORE__SQL_ALCHEMY_CONN")` or `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` — DAGs that read the metadata-DB URL or credentials to connect directly or to build a JDBC connection elsewhere), `MWAA__DB__`
 
 **Availability changes across the major boundary (surface this to the user).**
 On AF2, DAG tasks can open a session against the environment metadata DB. On
@@ -97,6 +97,26 @@ Fix: Use `on_skipped_callback` for skip handling. `TriggerRule.DUMMY` -> `Trigge
 
 Search for: `.output` preceded by a `@task`-decorated function name (e.g., `my_task.output`, `create_cluster.output`)
 Ruff AIR rules do NOT detect this pattern.
+
+A plain text grep for `.output` over-reports: `.output` on a classic operator
+instance (for example `create_app = EmrServerlessCreateApplicationOperator(...)`
+then `create_app.output`) is a valid XCom reference on both AF2 and AF3. Only
+flag `.output` whose receiver is the name of a `@task`-decorated function. An
+AST check is reliable:
+
+```python
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+decorated = {
+    n.name for n in ast.walk(tree)
+    if isinstance(n, ast.FunctionDef) and any(
+        "task" in ast.unparse(d).split("(")[0] for d in n.decorator_list)
+}
+for n in ast.walk(tree):
+    if (isinstance(n, ast.Attribute) and n.attr == "output"
+            and isinstance(n.value, ast.Name) and n.value.id in decorated):
+        print(f"{sys.argv[1]}:{n.lineno}: {n.value.id}.output")
+```
 
 In AF2, `@task`-decorated functions expose a `.output` property on the decorator
 object that resolves to an XCom reference. In AF3, `_TaskDecorator.output` is

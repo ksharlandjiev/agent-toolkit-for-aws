@@ -71,7 +71,8 @@ directory. Never fetch or write customer data through `retrieve_skill`.
 
 **Provisioned:** list failed DAG runs and task instances via
 `aws mwaa invoke-rest-api` (paths `/dags/{id}/dagRuns` and
-`/dags/{id}/dagRuns/{run_id}/taskInstances`). If `invoke-rest-api` errors
+`/dags/{id}/dagRuns/~/taskInstances`, filtered on `dag_run_id` — per-run paths
+usually exceed the 64-character `--path` limit). If `invoke-rest-api` errors
 (`RestApiClientException`), fall back to the Scheduler and DAGProcessing log
 groups. Get version and config from `aws mwaa get-environment`. See
 [references/provisioned-diagnostics.md](references/provisioned-diagnostics.md).
@@ -87,7 +88,10 @@ populated `TaskInstances` is a task-execution failure. See
 Pull the real exception past boilerplate:
 
 **Provisioned:** read the Task log group first, then Worker/Scheduler/
-DAGProcessing as the symptom directs.
+DAGProcessing as the symptom directs. For a deferrable AWS operator whose Task
+log shows only `Trigger failure`, read the AWS service's own run record (for
+example Glue `get-job-runs` → `ErrorMessage`) — see
+[references/provisioned-diagnostics.md](references/provisioned-diagnostics.md).
 
 **Serverless:** `list-task-instances` then `get-task-instance` to get each
 task's `LogStream`, then read that stream in CloudWatch.
@@ -153,12 +157,26 @@ compliant artifact.
   `ModuleNotFoundError` is a packaging problem (wrong-platform wheel, missing
   dep, bad layout), not a YAML definition error. See the failure catalog's
   serverless custom-code section.
+- An environment version bump that changes the Python line (Airflow 2.11.x+
+  runs Python 3.12) can break unchanged DAGs on modules removed from the
+  standard library (`imp`, `asynchat`, `asyncore`, `smtpd`). Treat a
+  `ModuleNotFoundError` for a stdlib module after an upgrade as drift.
+- `DAG not found during start up` on the first attempt of a run that started
+  within seconds of the DAG's first parse is a worker S3-sync race (the
+  scheduler saw the file before the worker did), common when
+  `core.dags_are_paused_at_creation` is `False`. Re-run; it is not a code bug.
+- A task that reports success does not prove its AWS side effect happened.
+  When a teardown or cleanup task succeeds but the resource still exists,
+  verify the resource state in the AWS service before closing the diagnosis
+  (see the failure catalog's resource-leak row).
 
 ## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `RestApiClientException` (Provisioned) | Mis-scoped execution role or service error | Fall back to Scheduler/DAGProcessing log groups |
+| `RestApiClientException` (Provisioned) | Mis-scoped execution role, nonexistent endpoint, or service error | Check the path against the REST API version (v1 for 2.x, v2 for 3.x); fall back to Scheduler/DAGProcessing log groups if enabled |
+| `RestApiServerException` (Provisioned) | Web-server 5xx, often transient on an idle environment | Retry with exponential backoff and a smaller `limit`; report only if it reproduces |
+| Task log shows only `Trigger failure` | Deferrable operator; cause is in the AWS service | Read the service run record (Glue `get-job-runs`, EMR Serverless `get-job-run`, Athena `get-query-execution`) |
 | `ResourceNotFoundException` on get-workflow-run | Wrong workflow ARN or run id | Re-list with list-workflow-runs |
 | Task log stream empty (Serverless) | Wrong log group assumed | Read `LoggingConfiguration` from get-workflow |
 | No task logs but run FAILED | Definition/parse error | Read `RunDetail.ErrorMessage`; fix the YAML |

@@ -230,7 +230,8 @@ resuming work, run this reconciliation:
      (paginate: loop `offset` by 100 until `total_entries`, per
      discovery-preflight.md Step 1.4) - are the DAGs deployed, and is
      `has_import_errors` false?
-   - `aws mwaa invoke-rest-api --name <env> --method GET --path /health` -
+   - `aws mwaa invoke-rest-api --name <env> --method GET --path /health`
+     (Airflow 2.x) or `--path /monitor/health` (Airflow 3.x) -
      metadatabase/scheduler healthy, heartbeat advancing?
 4. Repair the plan to match observed reality (correct the drifted
    statuses/checkpoint), and record what was repaired in the `Last updated`

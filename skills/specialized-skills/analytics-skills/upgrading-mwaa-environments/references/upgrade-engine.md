@@ -30,7 +30,17 @@ possible.
 
 1. Deploy the current DAG set to the environment; wait for parsing.
 1a. Unpause all deployed DAGs. Newly synced DAGs register as paused by default
-   on MWAA. For each DAG in the deployed set:
+   on MWAA (unless `core.dags_are_paused_at_creation` is `False`).
+   **New-environment upgrade:** while a DAG is unpaused on both the new
+   environment and your current environment, its schedule runs on both — a
+   non-idempotent DAG executes twice, and DAGs that drive named AWS resources
+   (Glue jobs, crawlers, EMR applications, S3 output prefixes) collide unless
+   those names are namespaced per environment. Before unpausing, confirm with
+   the user that duplicate scheduled runs are acceptable for the validation
+   window; otherwise keep the DAGs paused and let the testing skill's manual
+   triggers drive validation (unpause just before each test trigger and pause
+   again afterwards). Phase 8 switchover then owns the final unpause.
+   For each DAG in the deployed set:
 
    ```
    aws mwaa invoke-rest-api --name <env> --method PATCH \
@@ -54,14 +64,20 @@ possible.
    the per-DAG path.
 2. Check `has_import_errors` is false for all DAGs
    (`invoke-rest-api --path /dags`).
-3. **Scan logs** when the NEXT version jump crosses into a new major version
-   (this version is the required stepping-stone before the crossing): search
-   CloudWatch scheduler and task logs for `RemovedInAirflow3Warning` /
-   `RemovedInAirflow{N}Warning` and `DeprecationWarning`. Combine with the
-   Ruff AIR scan (`ruff check --preview --select AIR .`) and fix using
+3. **Scan for deprecations** when the NEXT version jump crosses into a new
+   major version (this version is the required stepping-stone before the
+   crossing). The authoritative sources are the Ruff AIR scan
+   (`ruff check --preview --select AIR .`) and the Phase 6 Docker parse with
+   warnings enabled ([docker-validation.md](docker-validation.md)). A CloudWatch
+   search of scheduler and task logs for `RemovedInAirflow3Warning` /
+   `RemovedInAirflow{N}Warning` / `DeprecationWarning` is supplementary only: on
+   MWAA it returns platform-internal warnings (metrics timer units, `fork()`),
+   and user-DAG deprecations such as `days_ago` or `schedule_interval` do not
+   appear there. Never record "no warnings in logs" as evidence that the DAGs
+   are clean. Fix using
    [airflow2-to-3-quick-reference.md](airflow2-to-3-quick-reference.md) and
-   [airflow2-to-3-checklist.md](airflow2-to-3-checklist.md). Re-deploy until no
-   `RemovedInAirflow{N}Warning` remains and imports are clean.
+   [airflow2-to-3-checklist.md](airflow2-to-3-checklist.md); re-deploy until the
+   Ruff scan and the Docker parse are clean.
 4. **Python-line re-validation:** if the just-reached version jump was
    flagged `python_change` (it crossed a Python-line boundary, e.g. 3.11 to
    3.12), run a dedicated requirements re-validation against the new
@@ -69,9 +85,15 @@ possible.
    before continuing. This is the generalized reason the intermediate step
    exists (to move Python safely and isolate compiled-dependency risk); it
    applies whether or not the version jump also crosses a major version.
-5. **Same-major version jump with no crossing ahead:** scan logs for generic
-   `DeprecationWarning` best-effort (non-blocking) to surface APIs removed in
-   the target.
+   Also confirm `GET /importErrors` is empty: an unchanged DAG that imports a
+   standard-library module removed in the new Python line (for 3.12: `imp`,
+   `asynchat`, `asyncore`, `smtpd`) disappears from `/dags` at this point.
+   Hand any such error to `debugging-mwaa-workflow` (drift) and fix through
+   `authoring-mwaa-workflow`.
+5. **Same-major version jump with no crossing ahead:** rely on `GET
+   /importErrors` and the Phase 6 Docker parse; a CloudWatch scan for
+   `DeprecationWarning` is best-effort only (see step 3 — MWAA logs do not
+   carry user-DAG warnings).
 
 ## Steps
 
@@ -197,10 +219,15 @@ aws mwaa get-environment --name <env> --query "Environment.Status"
 - Verify health:
 
   ```
+  # Airflow 2.x (REST API v1)
   aws mwaa invoke-rest-api --name <env> --method GET --path /health
+  # Airflow 3.x (REST API v2) — /health does not exist and returns RestApiClientException
+  aws mwaa invoke-rest-api --name <env> --method GET --path /monitor/health
   ```
 
-  Expected: metadatabase=healthy, scheduler=healthy.
+  Expected: metadatabase=healthy, scheduler=healthy. Use the path that matches
+  the environment's Airflow version AFTER the jump (an upgrade to 3.x switches
+  the health path).
 - Confirm `has_import_errors` is false for every DAG.
 - On failure, hand off to `debugging-mwaa-workflow` with context
   ("upgrade to `<target>` on `<env>`; DAGs `<list>` have import errors"), then
