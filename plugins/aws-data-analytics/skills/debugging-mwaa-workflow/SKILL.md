@@ -88,7 +88,10 @@ populated `TaskInstances` is a task-execution failure. See
 Pull the real exception past boilerplate:
 
 **Provisioned:** read the Task log group first, then Worker/Scheduler/
-DAGProcessing as the symptom directs.
+DAGProcessing as the symptom directs. For a deferrable AWS operator whose Task
+log shows only `Trigger failure`, read the AWS service's own run record (for
+example Glue `get-job-runs` → `ErrorMessage`) — see
+[references/provisioned-diagnostics.md](references/provisioned-diagnostics.md).
 
 **Serverless:** `list-task-instances` then `get-task-instance` to get each
 task's `LogStream`, then read that stream in CloudWatch.
