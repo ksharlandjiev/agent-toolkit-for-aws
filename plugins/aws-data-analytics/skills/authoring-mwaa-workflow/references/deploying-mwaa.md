@@ -22,6 +22,12 @@ stated (production safety). Warn on prod-named/tagged targets.
 4. The environment syncs from S3 and parses on its own schedule (seconds to a
    few minutes). Readiness after upload is testing-mwaa-workflow's Step 1, not
    this phase's job.
+5. **Paused-at-creation check:** read `core.dags_are_paused_at_creation` from
+   `get-environment` → `AirflowConfigurationOptions` (default `True`). When it
+   is `False`, a new scheduled DAG is unpaused on first parse and, with
+   `catchup=False` and a past interval, the scheduler starts a run within
+   seconds — before the workers may have the file, and before any test
+   confirmation. State this in the deploy confirmation.
 
 ## Provisioned: post-deploy verification
 
