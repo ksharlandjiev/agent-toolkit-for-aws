@@ -113,7 +113,12 @@ For deeper detail beyond embedded references, fetch at runtime:
 
 At every invocation, check for `.mwaa-upgrade-plan-<env-name>.md` in the
 workspace root (where `<env-name>` is the source environment name). Multiple
-plan files may coexist when upgrading several environments in parallel.
+plan files may coexist when upgrading several environments in parallel. Run
+only one upgrade per source environment at a time — the plan file is keyed by
+the source name. If a plan exists with `phase: complete` and the user starts a
+new upgrade of the same source, rename the old plan to
+`.mwaa-upgrade-plan-<env-name>.<UTC-date>.done.md` (keep it as the record)
+before writing the new one; never resume a completed plan.
 
 - **If exists**: Load the plan, report source, target, chosen approach, and
   the position `(working_on, current_jump, jump_status)`. Resume the engine
