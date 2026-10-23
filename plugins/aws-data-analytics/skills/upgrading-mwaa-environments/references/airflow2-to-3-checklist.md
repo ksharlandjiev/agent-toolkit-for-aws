@@ -98,6 +98,26 @@ Fix: Use `on_skipped_callback` for skip handling. `TriggerRule.DUMMY` -> `Trigge
 Search for: `.output` preceded by a `@task`-decorated function name (e.g., `my_task.output`, `create_cluster.output`)
 Ruff AIR rules do NOT detect this pattern.
 
+A plain text grep for `.output` over-reports: `.output` on a classic operator
+instance (for example `create_app = EmrServerlessCreateApplicationOperator(...)`
+then `create_app.output`) is a valid XCom reference on both AF2 and AF3. Only
+flag `.output` whose receiver is the name of a `@task`-decorated function. An
+AST check is reliable:
+
+```python
+import ast, sys
+tree = ast.parse(open(sys.argv[1]).read())
+decorated = {
+    n.name for n in ast.walk(tree)
+    if isinstance(n, ast.FunctionDef) and any(
+        "task" in ast.unparse(d).split("(")[0] for d in n.decorator_list)
+}
+for n in ast.walk(tree):
+    if (isinstance(n, ast.Attribute) and n.attr == "output"
+            and isinstance(n.value, ast.Name) and n.value.id in decorated):
+        print(f"{sys.argv[1]}:{n.lineno}: {n.value.id}.output")
+```
+
 In AF2, `@task`-decorated functions expose a `.output` property on the decorator
 object that resolves to an XCom reference. In AF3, `_TaskDecorator.output` is
 removed entirely — accessing it raises `AttributeError`.
