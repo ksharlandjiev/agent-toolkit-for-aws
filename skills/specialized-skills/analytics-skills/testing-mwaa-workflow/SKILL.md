@@ -124,14 +124,17 @@ already been given.
 Before triggering, check for scheduler-created runs (see provisioned-testing
 reference). Apply the **freshness gate** before adopting any prior run:
 
-- **Delegated mode:** always trigger fresh. Prior runs predate the deployment
-  by definition — do not adopt regardless of state.
-- **Standalone mode:** compare `run.start_date` against `dag.last_parsed_time`
+- **Both modes:** compare `run.start_date` against `dag.last_parsed_time`
   read from the `/dags` collection response the Step 1 readiness check already
   fetches (the collection returns `last_parsed_time` per DAG in both v1 and v2 —
   no per-DAG call needed). If `start_date < last_parsed_time`, the run tested a
   prior artifact version — treat as stale, trigger fresh. Only adopt runs where
   `start_date >= last_parsed_time`.
+- **Delegated mode, additionally:** adopt only if `last_parsed_time` is later
+  than the redeploy (upload) time. Do not assume every prior run is stale — an
+  environment with `core.dags_are_paused_at_creation=False` can schedule a run
+  within a second of the first parse, and that run tests the new artifact; a
+  forced fresh trigger would only queue behind it under `max_active_runs`.
 
 For fresh, non-stale runs that pass the gate: if a run already exists for the
 target interval, adopt it instead of POSTing. Monitor through Step 3.

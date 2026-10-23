@@ -120,22 +120,27 @@ trigger failure but is the concurrency cap.
 When a paused DAG is unpaused during testing (common in delegated mode — the
 DAG was just deployed paused), and `catchup=False` with an eligible interval
 already past, the scheduler creates a `scheduled__` run immediately. This
-consumes the next eligible `logical_date`.
+consumes the next eligible `logical_date`. If the environment sets
+`core.dags_are_paused_at_creation=False`, the same happens without an unpause —
+the scheduler can create the run within a second of the DAG's first parse.
 
 Before POSTing a manual trigger:
 
 1. GET `/dags/<dag_id>/dagRuns` with `{"order_by": "-start_date", "limit": "1"}`.
 2. **Apply the freshness gate** — a prior run may have tested a previous
-   version of the artifact:
-   - **Delegated mode:** the artifact was just rewritten and redeployed.
-     Any prior run by definition tested the previous file. Skip adoption
-     and trigger fresh regardless of state.
-   - **Standalone mode:** compare `run.start_date` against
-     `dag.last_parsed_time` read from the `/dags` collection readiness
-     response (the ready check already fetches it; the collection returns
-     `last_parsed_time` per DAG, so there is no need to re-query the per-DAG
-     endpoint). If `start_date < last_parsed_time`, the run predates the
-     current artifact — treat as stale, trigger fresh.
+   version of the artifact. In both modes, compare `run.start_date` (or
+   `queued_at` when `start_date` is not set yet) against
+   `dag.last_parsed_time` read from the `/dags` collection readiness response
+   (the ready check already fetches it; the collection returns
+   `last_parsed_time` per DAG, so there is no need to re-query the per-DAG
+   endpoint):
+   - `start_date < last_parsed_time` — the run predates the current artifact;
+     treat as stale and trigger fresh.
+   - `start_date >= last_parsed_time` — the run exercises the current artifact.
+     **Delegated mode** may adopt it only when `last_parsed_time` is later than
+     the upload time of the redeployed file (the run cannot predate the new
+     artifact); otherwise trigger fresh. Adopting avoids a duplicate run that
+     would only queue behind it under `max_active_runs`.
 3. If a **fresh** run exists (passes the gate):
    - Non-terminal (`queued`/`running`) — adopt it: skip the POST, proceed
      directly to poll (Step 3) using the scheduler's `dag_run_id`.
