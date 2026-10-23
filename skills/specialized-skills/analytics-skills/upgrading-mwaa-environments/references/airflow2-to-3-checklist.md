@@ -6,7 +6,7 @@ Patterns that require manual grep/search because Ruff AIR30x rules do not cover 
 
 ## 1. Direct metadata DB access
 
-Search for: `provide_session`, `create_session`, `@provide_session`, `from airflow.settings import Session`, `from airflow.settings import engine`, `session.query(`, `engine.connect(`
+Search for: `provide_session`, `create_session`, `@provide_session`, `from airflow.settings import Session`, `from airflow.settings import engine`, `session.query(`, `engine.connect(`, `SQL_ALCHEMY_CONN` (e.g. `os.getenv("AIRFLOW__CORE__SQL_ALCHEMY_CONN")` or `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN` — DAGs that read the metadata-DB URL or credentials to connect directly or to build a JDBC connection elsewhere), `MWAA__DB__`
 
 **Availability changes across the major boundary (surface this to the user).**
 On AF2, DAG tasks can open a session against the environment metadata DB. On
