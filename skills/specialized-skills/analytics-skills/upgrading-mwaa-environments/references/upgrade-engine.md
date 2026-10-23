@@ -30,7 +30,17 @@ possible.
 
 1. Deploy the current DAG set to the environment; wait for parsing.
 1a. Unpause all deployed DAGs. Newly synced DAGs register as paused by default
-   on MWAA. For each DAG in the deployed set:
+   on MWAA (unless `core.dags_are_paused_at_creation` is `False`).
+   **New-environment upgrade:** while a DAG is unpaused on both the new
+   environment and your current environment, its schedule runs on both — a
+   non-idempotent DAG executes twice, and DAGs that drive named AWS resources
+   (Glue jobs, crawlers, EMR applications, S3 output prefixes) collide unless
+   those names are namespaced per environment. Before unpausing, confirm with
+   the user that duplicate scheduled runs are acceptable for the validation
+   window; otherwise keep the DAGs paused and let the testing skill's manual
+   triggers drive validation (unpause just before each test trigger and pause
+   again afterwards). Phase 8 switchover then owns the final unpause.
+   For each DAG in the deployed set:
 
    ```
    aws mwaa invoke-rest-api --name <env> --method PATCH \
