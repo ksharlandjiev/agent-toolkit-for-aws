@@ -111,8 +111,9 @@ b. Migrate operational config to the test copy via `aws mwaa
    secrets caveat there: `/variables`, `/connections`, and `/pools` paginate
    at limit 100 (loop `offset` until `total_entries`), connection passwords
    do not round-trip (2.x omits, 3.x masks), and migrated values land in
-   argv/audit logs). Prefer a secrets backend; skip variables/connections
-   when one is in use.
+   argv/audit logs). Send only fields that have values (a `null` field such as
+   `"description": null` is rejected with an empty `RestApiClientException`).
+   Prefer a secrets backend; skip variables/connections when one is in use.
 
 c. Run the step-by-step upgrade on the test copy; starting condition: newly
    created. See [upgrade-engine.md](upgrade-engine.md).

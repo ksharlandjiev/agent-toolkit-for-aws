@@ -150,6 +150,12 @@ aws mwaa invoke-rest-api --name <new-env> --method POST --path /variables \
   --body '{"key":"<key>","value":"<value>"}'
 ```
 
+Send only the fields that have values. A body that carries a field set to
+`null` (for example `"description": null` copied from the GET response) is
+rejected with an empty `RestApiClientException`. When a migration call fails,
+do not echo the request body in output or logs — it contains the variable
+value.
+
 **Connections** (skip if secrets backend handles these):
 
 ```
