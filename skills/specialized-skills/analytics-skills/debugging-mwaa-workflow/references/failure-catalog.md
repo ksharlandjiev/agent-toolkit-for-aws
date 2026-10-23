@@ -155,6 +155,18 @@ by the environment is irrelevant to the current failure.
   libraries at install time.
 - Check whether the environment version was bumped (get-environment
   `AirflowVersion`) — a version change re-resolves the entire provider stack.
+- Check whether the version bump changed the Python line (Airflow 2.7–2.10 run
+  Python 3.11; 2.11.x and 3.x run Python 3.12). A `ModuleNotFoundError` for a
+  standard-library module removed in 3.12 (`imp`, `asynchat`, `asyncore`,
+  `smtpd`) or an `ImportError` on `configparser.SafeConfigParser` in an
+  unchanged DAG is this drift. `distutils` may still import through the
+  setuptools shim in the MWAA image, so do not assume it breaks — check the
+  `/importErrors` traceback.
+- Requirements that never installed: an environment can stay `AVAILABLE` while
+  every `requirements_install_*` log stream (Scheduler and Worker log groups)
+  shows `ERROR:` — for example a `--constraint` path that does not exist under
+  `DagS3Path`. Compare the providers actually installed (`GET /providers`) with
+  the pins in requirements.txt.
 
 Remediation to recommend: pin exact versions in requirements.txt and use the
 MWAA constraints file for the target Airflow version; pin `.whl` contents in

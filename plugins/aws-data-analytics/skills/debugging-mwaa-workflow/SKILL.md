@@ -154,12 +154,26 @@ compliant artifact.
   `ModuleNotFoundError` is a packaging problem (wrong-platform wheel, missing
   dep, bad layout), not a YAML definition error. See the failure catalog's
   serverless custom-code section.
+- An environment version bump that changes the Python line (Airflow 2.11.x+
+  runs Python 3.12) can break unchanged DAGs on modules removed from the
+  standard library (`imp`, `asynchat`, `asyncore`, `smtpd`). Treat a
+  `ModuleNotFoundError` for a stdlib module after an upgrade as drift.
+- `DAG not found during start up` on the first attempt of a run that started
+  within seconds of the DAG's first parse is a worker S3-sync race (the
+  scheduler saw the file before the worker did), common when
+  `core.dags_are_paused_at_creation` is `False`. Re-run; it is not a code bug.
+- A task that reports success does not prove its AWS side effect happened.
+  When a teardown or cleanup task succeeds but the resource still exists,
+  verify the resource state in the AWS service before closing the diagnosis
+  (see the failure catalog's resource-leak row).
 
 ## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `RestApiClientException` (Provisioned) | Mis-scoped execution role or service error | Fall back to Scheduler/DAGProcessing log groups |
+| `RestApiClientException` (Provisioned) | Mis-scoped execution role, nonexistent endpoint, or service error | Check the path against the REST API version (v1 for 2.x, v2 for 3.x); fall back to Scheduler/DAGProcessing log groups if enabled |
+| `RestApiServerException` (Provisioned) | Web-server 5xx, often transient on an idle environment | Retry with exponential backoff and a smaller `limit`; report only if it reproduces |
+| Task log shows only `Trigger failure` | Deferrable operator; cause is in the AWS service | Read the service run record (Glue `get-job-runs`, EMR Serverless `get-job-run`, Athena `get-query-execution`) |
 | `ResourceNotFoundException` on get-workflow-run | Wrong workflow ARN or run id | Re-list with list-workflow-runs |
 | Task log stream empty (Serverless) | Wrong log group assumed | Read `LoggingConfiguration` from get-workflow |
 | No task logs but run FAILED | Definition/parse error | Read `RunDetail.ErrorMessage`; fix the YAML |

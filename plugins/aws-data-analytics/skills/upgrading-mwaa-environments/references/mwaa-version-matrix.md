@@ -36,8 +36,16 @@ For releases newer than 3.2.1, derive the Python version from the runtime fetch
 (`python_by_version`) above rather than from this list, since a future 3.x may
 adopt Python 3.13+.
 A version jump that crosses any of these boundaries carries compiled-dependency
-risk and is flagged `python_change`. `GetEnvironment` returns `AirflowVersion`
-but not the Python version, so derive the source Python from these boundaries.
+risk and standard-library-removal risk, and is flagged `python_change`.
+`GetEnvironment` returns `AirflowVersion` but not the Python version, so derive
+the source Python from these boundaries.
+
+Standard-library modules removed at the 3.11 -> 3.12 boundary that DAG code
+still commonly imports: `imp` (use `importlib`), `asynchat`, `asyncore`,
+`smtpd`, and `distutils` (the MWAA image may still provide `distutils` through
+the setuptools shim, so confirm with a Phase 6 parse rather than assuming a
+break). Also removed: `configparser.SafeConfigParser`, `locale.format()`, and
+the `unittest` method aliases (`assertEquals`, `failUnless`, ...).
 
 A source below the current minimum supported version is below supported
 upgrade paths: report as manual intervention or environment recreation; do not
