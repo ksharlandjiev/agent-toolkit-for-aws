@@ -86,6 +86,20 @@ compaction before Phase 4 loses anything not written to the plan).
    policy (`aws iam get-role`) for `aws:SourceArn`/`aws:SourceAccount`
    conditions scoped to your current environment's ARN; if present, add the
    new or test environment's ARN before creating it.
+5. **Execution-role permission-scope check** (approaches that create a new or
+   test environment — New-environment and Rehearsed upgrades only): the
+   permission policy of a reused execution role is often scoped to the
+   current environment's name — for example `logs:*` on
+   `arn:aws:logs:<region>:<account>:log-group:airflow-<current-env>-*` and
+   `airflow:PublishMetrics` on `arn:aws:airflow:<region>:<account>:environment/<current-env>`.
+   Read the attached and inline policies (`aws iam list-attached-role-policies`,
+   `get-policy-version`, `list-role-policies`, `get-role-policy`) and list
+   every statement whose `Resource` embeds the current environment's name.
+   Present the additional resource ARNs for the new or test environment
+   (HUMAN-GATED IAM change); without them the new environment cannot write its
+   logs or metrics. A broad policy such as `AdministratorAccess` masks this gap
+   — report it as a least-privilege finding instead of treating the check as
+   passed.
 
 ## Step 3: Refresh Version Matrix
 
