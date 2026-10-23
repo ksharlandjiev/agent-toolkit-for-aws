@@ -57,15 +57,21 @@ Read `RestApiResponse.dag_runs[].state`. Filter for `failed`.
 
 ### Get task instances for a failed run
 
-Use the collection endpoint and pass the run in query parameters — the
-`--path` is capped at 64 characters (MWAA `InvokeRestApi`), and the per-run
-path below often exceeds it:
+Use the `~` (all runs) wildcard collection and filter on `dag_run_id`
+client-side — the `--path` is capped at 64 characters (MWAA `InvokeRestApi`),
+and the per-run path below often exceeds it (a scheduled run id such as
+`scheduled__2026-10-22T05:29:00+00:00` is 37 characters on its own):
 
 ```bash
 aws mwaa invoke-rest-api --name <env> \
-  --path /dags/<dag_id>/taskInstances --method GET \
-  --query-parameters '{"dag_run_id":"<run_id>","limit":"100","offset":"0"}'
+  --path /dags/<dag_id>/dagRuns/~/taskInstances --method GET \
+  --query-parameters '{"limit":"100","offset":"0"}'
 ```
+
+Keep only the entries whose `dag_run_id` equals the target run. Do NOT use
+`/dags/<dag_id>/taskInstances?dag_run_id=<run_id>` — that endpoint does not
+exist in either REST API v1 (Airflow 2.x) or v2 (Airflow 3.x) and fails with an
+empty `RestApiClientException`.
 
 The per-run path is shorter to read but embeds `<run_id>` in the path, so
 `/dags/<dag_id>/dagRuns/<run_id>/taskInstances` frequently exceeds the 64-char

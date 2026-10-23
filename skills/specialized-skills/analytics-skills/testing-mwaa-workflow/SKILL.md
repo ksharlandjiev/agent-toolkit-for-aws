@@ -255,10 +255,10 @@ human-gated-pause, each named explicitly.
 | Symptom | Cause | Action |
 |---------|-------|--------|
 | DAG absent from `GET /dags` | S3-sync lag or import error | Hand to debugging-mwaa-workflow before triggering |
-| `--path` rejected / truncated | Path over 64 chars (https://docs.aws.amazon.com/cli/latest/reference/mwaa/invoke-rest-api.html) | Poll the collection path with `--query-parameters` |
-| `RestApiClientException` on poll | Web server unreachable | Fall back to DAGProcessing/Scheduler log groups |
+| `--path` rejected / truncated | Path over 64 chars (https://docs.aws.amazon.com/cli/latest/reference/mwaa/invoke-rest-api.html) | Poll the collection path with `--query-parameters`; for task instances use `/dags/<dag_id>/dagRuns/~/taskInstances` and filter on `dag_run_id`; keep manual `dag_run_id`s short |
+| `RestApiClientException` on poll | Web server unreachable, or an endpoint that does not exist for this REST version (e.g. `/dags/<dag_id>/taskInstances`) | Check the path against v1 (2.x) / v2 (3.x); then fall back to DAGProcessing/Scheduler log groups |
 | `RestApiClientException` on dagRuns POST (empty message) | DAG not ready — AF2: `is_active=false` (activation incomplete); AF3: `is_stale=true` (`is_active` does not exist in v2) | Poll `/dags` collection until ready (AF2 `is_active=true` / AF3 `is_stale=false`); do not retry the trigger blind |
-| Manual run created but stuck in `queued`, never starts (AF3) | DAG is paused — AF3 does not execute manual runs while paused (AF2 does) | Unpause (`PATCH /dags/<dag_id>` `{"is_paused": false}`) then trigger; common right after an upgrade where DAGs are deployed paused |
+| Manual run created but stuck in `queued`, `start_date` null, never starts | DAG is paused — neither Airflow 2.x nor 3.x starts runs of a paused DAG | Unpause (`PATCH /dags/<dag_id>` `{"is_paused": false}`) then trigger; common right after a deploy or upgrade where DAGs are registered paused |
 | Serverless `get-workflow` not READY | Still creating/updating or failed | Wait for READY; if FAILED, hand to debugging |
 | Same failure two attempts running | Fix not addressing root cause | Stop at no-progress; summarize; do not burn the cap |
 

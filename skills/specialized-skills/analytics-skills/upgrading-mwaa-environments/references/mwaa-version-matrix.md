@@ -110,7 +110,12 @@ _Verify against the AWS MWAA documentation at runtime; feature support can chang
 - MWAA auto-routes paths based on environment Airflow version
 - AF2 environments: paths resolve to `/api/v1`
 - AF3 environments: paths resolve to `/api/v2`
-- Pass just the path portion (e.g., `/dags`, `/health`) without the version prefix
+- Pass just the path portion (e.g., `/dags`) without the version prefix
+- Health endpoint differs by version: `/health` on AF2 (v1), `/monitor/health`
+  on AF3 (v2); each returns `RestApiClientException` on the other version
+- Task instances of one run: `/dags/<dag_id>/dagRuns/~/taskInstances`, filtered
+  on `dag_run_id` client-side; `/dags/<dag_id>/taskInstances` does not exist in
+  v1 or v2
 - 10-second timeout, 6 MB max response
   (https://docs.aws.amazon.com/mwaa/latest/userguide/access-mwaa-apache-airflow-rest-api.html)
 - Requires IAM permission: `airflow:InvokeRestApi`

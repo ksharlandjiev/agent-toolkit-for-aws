@@ -150,7 +150,7 @@ marked `PASSED` requires all its prerequisite Checklist items `DONE`/`SKIP`;
 Upgrade Path Status; for the Rehearsed in-place upgrade, `live_upgrade_allowed`
 must equal the test-run checkpoint. On ANY violation, do NOT trust the plan -
 establish ground truth with read-only `aws mwaa get-environment`, `/dags`, and
-`/health`, repair the plan to match reality, and record it in `Last updated`.
+the health endpoint (`/health` on Airflow 2.x, `/monitor/health` on 3.x), repair the plan to match reality, and record it in `Last updated`.
 If reality is ambiguous, ask the user. A stale `PASSED` checkpoint otherwise
 triggers a destructive next action: switchover + delete your current
 environment (New-environment upgrade), the irreversible live upgrade

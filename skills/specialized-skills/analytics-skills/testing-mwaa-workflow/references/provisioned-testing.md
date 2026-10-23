@@ -61,9 +61,12 @@ aws mwaa invoke-rest-api --name <env> --path /dags/<dag_id>/dagRuns \
   --method POST --body '{"dag_run_id": "<explicit-id>", "logical_date": "<unique-ISO8601-UTC>"}'
 ```
 
-`<explicit-id>` is a unique string you choose (e.g., `smoke_test__2026-08-11T01-00-00`).
+`<explicit-id>` is a unique string you choose (e.g., `smoke_t1`).
 Constraints: must not contain `/`; max 250 chars; must be unique per
-(dag_id, logical_date) pair.
+(dag_id, logical_date) pair. **Keep it short (about 20 characters or fewer):**
+`invoke-rest-api` caps `--path` at 64 characters, so any per-run path
+(`/dags/<dag_id>/dagRuns/<dag_run_id>/...`) built from a long id is rejected,
+and on Airflow 3.x there is no short-path alternative for per-run operations.
 
 **Airflow 2.x (REST API v1):**
 
@@ -84,13 +87,13 @@ with no descriptive message.
 
 Capture the `dag_run_id` so the poll can find this exact run.
 
-**Unpause before triggering (AF3 behavior change).** On Airflow 3.x, a manual
-run POSTed against a *paused* DAG is accepted (the run is created in `queued`)
-but the scheduler does not execute it while the DAG is paused — it sits
-`queued` indefinitely and looks like a stuck trigger. Airflow 2.x runs manual
-triggers regardless of pause state; AF3 does not. Unpause first
+**Unpause before triggering (both Airflow 2.x and 3.x).** A manual run POSTed
+against a *paused* DAG is accepted (the run is created in `queued`) but the
+scheduler does not start it while the DAG is paused — it sits `queued` with
+`start_date: null` indefinitely and looks like a stuck trigger. This holds on
+Airflow 2.x (verified on 2.10.3) as well as 3.x. Unpause first
 (`PATCH /dags/<dag_id>` with `{"is_paused": false}`), then trigger. This is
-common right after an upgrade, where DAGs are deployed paused.
+common right after a deploy or an upgrade, where DAGs are registered paused.
 
 **Prefer a definitely-past `logical_date`.** Manually triggered runs are
 processed regardless of `logical_date`, but using a timestamp in the past
@@ -168,6 +171,17 @@ captured id and read its `state` — a scheduler-created or concurrent run can
 otherwise be the newest by `start_date` and mask the target run. Terminal
 states: `success`, `failed`.
 `queued`/`running` mean keep polling.
+
+To see per-task progress, read the `~` (all runs) collection and keep the
+entries whose `dag_run_id` equals the captured id:
+
+```bash
+aws mwaa invoke-rest-api --name <env> --path /dags/<dag_id>/dagRuns/~/taskInstances \
+  --method GET --query-parameters '{"limit": "100", "offset": "0"}'
+```
+
+`/dags/<dag_id>/taskInstances?dag_run_id=...` does not exist in REST API v1 or
+v2 and fails with an empty `RestApiClientException`.
 
 ## Fallback
 

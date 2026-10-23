@@ -197,10 +197,15 @@ aws mwaa get-environment --name <env> --query "Environment.Status"
 - Verify health:
 
   ```
+  # Airflow 2.x (REST API v1)
   aws mwaa invoke-rest-api --name <env> --method GET --path /health
+  # Airflow 3.x (REST API v2) — /health does not exist and returns RestApiClientException
+  aws mwaa invoke-rest-api --name <env> --method GET --path /monitor/health
   ```
 
-  Expected: metadatabase=healthy, scheduler=healthy.
+  Expected: metadatabase=healthy, scheduler=healthy. Use the path that matches
+  the environment's Airflow version AFTER the jump (an upgrade to 3.x switches
+  the health path).
 - Confirm `has_import_errors` is false for every DAG.
 - On failure, hand off to `debugging-mwaa-workflow` with context
   ("upgrade to `<target>` on `<env>`; DAGs `<list>` have import errors"), then

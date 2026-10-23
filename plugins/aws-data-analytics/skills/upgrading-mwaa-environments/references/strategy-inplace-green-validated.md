@@ -176,7 +176,8 @@ is healthy before marking complete. Do NOT proceed to Step 4 or 5 until this
 checkpoint passes.
 
 ```
-aws mwaa invoke-rest-api --name <current-env> --method GET --path /health
+aws mwaa invoke-rest-api --name <current-env> --method GET --path /health          # Airflow 2.x
+aws mwaa invoke-rest-api --name <current-env> --method GET --path /monitor/health  # Airflow 3.x
 aws mwaa invoke-rest-api --name <current-env> --method GET --path /dags \
   --query-parameters '{"limit":"100","offset":"0"}'
 ```

@@ -71,7 +71,8 @@ directory. Never fetch or write customer data through `retrieve_skill`.
 
 **Provisioned:** list failed DAG runs and task instances via
 `aws mwaa invoke-rest-api` (paths `/dags/{id}/dagRuns` and
-`/dags/{id}/dagRuns/{run_id}/taskInstances`). If `invoke-rest-api` errors
+`/dags/{id}/dagRuns/~/taskInstances`, filtered on `dag_run_id` — per-run paths
+usually exceed the 64-character `--path` limit). If `invoke-rest-api` errors
 (`RestApiClientException`), fall back to the Scheduler and DAGProcessing log
 groups. Get version and config from `aws mwaa get-environment`. See
 [references/provisioned-diagnostics.md](references/provisioned-diagnostics.md).
